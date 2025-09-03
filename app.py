@@ -211,3 +211,67 @@ elif selected_section == "Visualise Data":
         st.pyplot(fig)
     else:
         st.write("Please upload a file to visualise data.")
+    
+    # --- Dashboard Area ---
+st.write("### Dashboard Area")
+
+# Make sure the DataFrame is loaded from the uploaded file
+# Assuming the sheet name is 'Daily forces near Taiwan'
+if uploaded_file:
+    if uploaded_file.name.endswith(".csv"):
+        df_daily_forces = pd.read_csv(uploaded_file)
+    else:
+        xls = pd.ExcelFile(uploaded_file)
+        if "Daily forces near Taiwan" in xls.sheet_names:
+            df_daily_forces = pd.read_excel(xls, sheet_name="Daily forces near Taiwan")
+        else:
+            st.write("Sheet 'Daily forces near Taiwan' not found.")
+            df_daily_forces = pd.DataFrame()
+
+    if not df_daily_forces.empty:
+        # --- Prepare data for cumulative monthly plot ---
+        df_daily_forces['date'] = pd.to_datetime(df_daily_forces['Date'], errors='coerce')
+        df_daily_forces = df_daily_forces.dropna(subset=['date'])
+        df_daily_forces['Year'] = df_daily_forces['date'].dt.year
+        df_daily_forces['Month'] = df_daily_forces['date'].dt.month
+
+        monthly_aircraft = df_daily_forces.groupby(['Year', 'Month'])['Total Aircraft Detected'].sum().reset_index()
+        pivot_aircraft = monthly_aircraft.pivot(index='Month', columns='Year', values='Total Aircraft Detected').fillna(0)
+        pivot_aircraft = pivot_aircraft.sort_index(axis=1)
+        cumulative_aircraft = pivot_aircraft.cumsum()
+
+        # --- Plot in Streamlit ---
+        fig, ax = plt.subplots(figsize=(16, 4))
+        colors = {
+            2020: '#FADBD8',
+            2021: '#F9E79F',
+            2022: '#A9CCE3',
+            2023: '#7DCEA0',
+            2024: '#85929E',
+            2025: '#1B2631'
+        }
+
+        for year in cumulative_aircraft.columns:
+            if year == 2025:
+                months_to_plot = cumulative_aircraft.index[cumulative_aircraft.index <= 6]
+                values_to_plot = cumulative_aircraft.loc[months_to_plot, year]
+            else:
+                months_to_plot = cumulative_aircraft.index
+                values_to_plot = cumulative_aircraft[year]
+
+            ax.plot(months_to_plot, values_to_plot, marker='o', label=str(year), color=colors.get(year, 'gray'))
+            last_month = months_to_plot[-1]
+            last_value = values_to_plot.iloc[-1]
+            ax.text(last_month, last_value + 0.02 * last_value, f"{int(last_value):,}",
+                    ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+        ax.set_title('Daily Aircraft Detected (Cumulative Yearly View)', fontsize=16)
+        ax.set_xlabel('Month')
+        ax.set_ylabel('Cumulative Aircraft Detected')
+        ax.set_xticks(range(1, 13))
+        ax.set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                            'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+        ax.grid(True)
+        ax.legend(title='Year')
+        st.pyplot(fig)
+
