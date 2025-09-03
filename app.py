@@ -213,65 +213,132 @@ elif selected_section == "Visualise Data":
         st.write("Please upload a file to visualise data.")
     
     # --- Dashboard Area ---
-st.write("### Dashboard Area")
+    st.write("### Dashboard Area")
 
-# Make sure the DataFrame is loaded from the uploaded file
-# Assuming the sheet name is 'Daily forces near Taiwan'
-if uploaded_file:
-    if uploaded_file.name.endswith(".csv"):
-        df_daily_forces = pd.read_csv(uploaded_file)
-    else:
-        xls = pd.ExcelFile(uploaded_file)
-        if "Daily forces near Taiwan" in xls.sheet_names:
-            df_daily_forces = pd.read_excel(xls, sheet_name="Daily forces near Taiwan")
+    # Make sure the DataFrame is loaded from the uploaded file
+    if uploaded_file:
+        if uploaded_file.name.endswith(".csv"):
+            daily_forces_near_taiwan = pd.read_csv(uploaded_file)
         else:
-            st.write("Sheet 'Daily forces near Taiwan' not found.")
-            df_daily_forces = pd.DataFrame()
-
-    if not df_daily_forces.empty:
-        # --- Prepare data for cumulative monthly plot ---
-        df_daily_forces['date'] = pd.to_datetime(df_daily_forces['Date'], errors='coerce')
-        df_daily_forces = df_daily_forces.dropna(subset=['date'])
-        df_daily_forces['Year'] = df_daily_forces['date'].dt.year
-        df_daily_forces['Month'] = df_daily_forces['date'].dt.month
-
-        monthly_aircraft = df_daily_forces.groupby(['Year', 'Month'])['Total Aircraft Detected'].sum().reset_index()
-        pivot_aircraft = monthly_aircraft.pivot(index='Month', columns='Year', values='Total Aircraft Detected').fillna(0)
-        pivot_aircraft = pivot_aircraft.sort_index(axis=1)
-        cumulative_aircraft = pivot_aircraft.cumsum()
-
-        # --- Plot in Streamlit ---
-        fig, ax = plt.subplots(figsize=(16, 4))
-        colors = {
-            2020: '#FADBD8',
-            2021: '#F9E79F',
-            2022: '#A9CCE3',
-            2023: '#7DCEA0',
-            2024: '#85929E',
-            2025: '#1B2631'
-        }
-
-        for year in cumulative_aircraft.columns:
-            if year == 2025:
-                months_to_plot = cumulative_aircraft.index[cumulative_aircraft.index <= 6]
-                values_to_plot = cumulative_aircraft.loc[months_to_plot, year]
+            xls = pd.ExcelFile(uploaded_file)
+            if "Daily forces near Taiwan" in xls.sheet_names:
+                daily_forces_near_taiwan = pd.read_excel(xls, sheet_name="Daily forces near Taiwan")
             else:
-                months_to_plot = cumulative_aircraft.index
-                values_to_plot = cumulative_aircraft[year]
+                st.write("Sheet 'Daily forces near Taiwan' not found.")
+                daily_forces_near_taiwan = pd.DataFrame()
 
-            ax.plot(months_to_plot, values_to_plot, marker='o', label=str(year), color=colors.get(year, 'gray'))
-            last_month = months_to_plot[-1]
-            last_value = values_to_plot.iloc[-1]
-            ax.text(last_month, last_value + 0.02 * last_value, f"{int(last_value):,}",
-                    ha='center', va='bottom', fontsize=9, fontweight='bold')
+        if not daily_forces_near_taiwan.empty:
+            # --- Preprocess ---
+            daily_forces_near_taiwan['date'] = pd.to_datetime(daily_forces_near_taiwan['Date'], errors='coerce')
+            daily_forces_near_taiwan = daily_forces_near_taiwan.dropna(subset=['date'])
+            daily_forces_near_taiwan['Year'] = daily_forces_near_taiwan['date'].dt.year
+            daily_forces_near_taiwan['Month'] = daily_forces_near_taiwan['date'].dt.month
+            daily_forces_near_taiwan['Total Aircraft Detected'] = (
+                daily_forces_near_taiwan['Regional Aircraft'] + daily_forces_near_taiwan['ADIZ Aircraft']
+            )
 
-        ax.set_title('Daily Aircraft Detected (Cumulative Yearly View)', fontsize=16)
-        ax.set_xlabel('Month')
-        ax.set_ylabel('Cumulative Aircraft Detected')
-        ax.set_xticks(range(1, 13))
-        ax.set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                            'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
-        ax.grid(True)
-        ax.legend(title='Year')
-        st.pyplot(fig)
+            # -------------------------------
+            # 1️⃣ Cumulative Statistics (Yearly View)
+            # -------------------------------
+            st.subheader("Cumulative Statistics (Yearly View)")
 
+            monthly_aircraft = daily_forces_near_taiwan.groupby(['Year', 'Month'])['Total Aircraft Detected'].sum().reset_index()
+            pivot_aircraft = monthly_aircraft.pivot(index='Month', columns='Year', values='Total Aircraft Detected').fillna(0)
+            pivot_aircraft = pivot_aircraft.sort_index(axis=1)
+            cumulative_aircraft = pivot_aircraft.cumsum()
+
+            fig, ax = plt.subplots(figsize=(16, 4))
+            colors = {
+                2020: '#FADBD8',
+                2021: '#F9E79F',
+                2022: '#A9CCE3',
+                2023: '#7DCEA0',
+                2024: '#85929E',
+                2025: '#1B2631'
+            }
+
+            latest_year = cumulative_aircraft.columns.max()
+            for year in cumulative_aircraft.columns:
+                if year == latest_year:
+                    months_to_plot = cumulative_aircraft.index[cumulative_aircraft[year] > 0]
+                    values_to_plot = cumulative_aircraft.loc[months_to_plot, year]
+                else:
+                    months_to_plot = cumulative_aircraft.index
+                    values_to_plot = cumulative_aircraft[year]
+
+                ax.plot(months_to_plot, values_to_plot, marker='o', label=str(year), color=colors.get(year, 'gray'))
+                last_month = months_to_plot[-1]
+                last_value = values_to_plot.iloc[-1]
+                ax.text(last_month, last_value + 0.02 * last_value, f"{int(last_value):,}",
+                        ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+            ax.set_title('Daily Aircraft Detected (Cumulative Yearly View)', fontsize=16)
+            ax.set_xlabel('Month')
+            ax.set_ylabel('Cumulative Aircraft Detected')
+            ax.set_xticks(range(1, 13))
+            ax.set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+            ax.grid(True)
+            ax.legend(title='Year')
+            st.pyplot(fig)
+
+            # -------------------------------
+            # 2️⃣ Daily Statistics (Monthly View)
+            # -------------------------------
+            st.subheader("Daily Statistics (Monthly View)")
+
+            # Load 'Daily median line crossings' sheet if it exists
+            if uploaded_file:
+                if uploaded_file.name.endswith(".csv"):
+                    daily_median_line_crossings = pd.DataFrame()  # CSV may not have this sheet
+                else:
+                    xls = pd.ExcelFile(uploaded_file)
+                    if "Daily median line crossings" in xls.sheet_names:
+                        daily_median_line_crossings = pd.read_excel(xls, sheet_name="Daily median line crossings")
+                        daily_median_line_crossings['date'] = pd.to_datetime(daily_median_line_crossings['Date'], errors='coerce')
+                        daily_median_line_crossings['Year'] = daily_median_line_crossings['date'].dt.year
+                        daily_median_line_crossings['Month'] = daily_median_line_crossings['date'].dt.month
+                    else:
+                        daily_median_line_crossings = pd.DataFrame()
+
+            # Let the user select which daily statistic to plot
+            stat_options = ["Daily Aircraft Detected", "Daily Aircraft in ADIZ", "Daily Median Line Crossings"]
+            selected_stat = st.selectbox("Select Daily Statistic", stat_options)
+
+            # Prepare data for plotting
+            if selected_stat == "Daily Aircraft Detected":
+                df_to_plot = daily_forces_near_taiwan.groupby(['Year', 'Month'])['Total Aircraft Detected'].sum().reset_index()
+                df_to_plot['YearMonth'] = pd.to_datetime(df_to_plot['Year'].astype(str) + '-' + df_to_plot['Month'].astype(str) + '-01')
+                y_values = df_to_plot.groupby('YearMonth')['Total Aircraft Detected'].sum()
+                y_label = "Total Aircraft Detected"
+
+            elif selected_stat == "Daily Aircraft in ADIZ":
+                df_to_plot = daily_forces_near_taiwan.groupby(['Year', 'Month'])['ADIZ Aircraft'].sum().reset_index()
+                df_to_plot['YearMonth'] = pd.to_datetime(df_to_plot['Year'].astype(str) + '-' + df_to_plot['Month'].astype(str) + '-01')
+                y_values = df_to_plot.groupby('YearMonth')['ADIZ Aircraft'].sum()
+                y_label = "Aircraft in ADIZ"
+
+            else:  # Daily Median Line Crossings
+                if not daily_median_line_crossings.empty:
+                    df_to_plot = daily_median_line_crossings.groupby(['Year', 'Month'])['Grand Total'].sum().reset_index()
+                    df_to_plot['YearMonth'] = pd.to_datetime(df_to_plot['Year'].astype(str) + '-' + df_to_plot['Month'].astype(str) + '-01')
+                    y_values = df_to_plot.groupby('YearMonth')['Grand Total'].sum()
+                    y_label = "Median Line Crossings"
+                else:
+                    st.write("No data found for Daily Median Line Crossings.")
+                    y_values = pd.Series(dtype=float)
+
+            # Plot if data is available
+            if not y_values.empty:
+                fig, ax = plt.subplots(figsize=(12, 4))
+                ax.plot(y_values.index, y_values.values, marker='o', linestyle='-', color='blue')
+                ax.set_title(f"{selected_stat} (Monthly Aggregated)", fontsize=14)
+                ax.set_xlabel("Month")
+                ax.set_ylabel(y_label)
+                ax.grid(True)
+                st.pyplot(fig)
+
+            # -------------------------------
+            # 3️⃣ Patrol Statistics
+            # -------------------------------
+            st.subheader("Patrol Statistics")
