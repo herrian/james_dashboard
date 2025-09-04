@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import io
 from io import BytesIO
 
 # Title
@@ -43,11 +44,13 @@ elif selected_section == "Upload & Edit Data":
             st.dataframe(df.head())
         else:
             xls = pd.ExcelFile(uploaded_file)
-            sheet_names = xls.sheet_names
-            selected_sheet = st.selectbox("Select a sheet", sheet_names)
-            df = pd.read_excel(xls, sheet_name=selected_sheet)
-            st.write(f"Data Preview: {selected_sheet}")
-            st.dataframe(df.head())
+            if "Main" in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name="Main")
+                st.write(f"Data Preview: Main")
+                st.dataframe(df.head())
+            else:
+                st.error("No sheet named 'Main' found in this excel file")
+                df = pd.Dataframe()
 
         # --- Show last X rows ---
         if not df.empty:
@@ -59,10 +62,38 @@ elif selected_section == "Upload & Edit Data":
 
         # --- Dynamic Input Section ---
         st.write("---")
-        st.subheader("Add a New Entry")
+        st.subheader("Submit New Report")
+
+        # --- Instructions Popup / Collapsible ---
+        with st.expander("ℹ️ How to fill this form", expanded=False):
+            st.markdown("""
+            **Instructions:**
+            - Refer to the images below to obtain relevant statistics from the report to fill in the form below.
+            """)
+        # --- Image 1 ---
+            st.write("### Written Report")
+            st.image("images/instruction1.png", caption="", use_container_width=True)
+            st.write("**Explanation:** The written report segment contains **Daily Aircraft Detected**, **Daily Aircraft in ADIZ** and **Daily PLAN Vessels Detected**.")
+            
+            st.markdown("---")  # Divider
+
+            # --- Image 2 ---
+            st.write("### Map of PLA air activities in the vicinity of Taiwan")
+            st.image("images/instruction2.png", caption="", use_container_width=True)
+            st.write("**Explanation:** Provided at the bottom of each report, the top-left boxes provide information on **Daily Median Line Crossings** as well as the **ADIZ Regions Violated**. " \
+            "In addition, information on the **Aircraft Category**, **Airframe**, and **Number of Aircraft** in each violated ADIZ region can be obtained from the top-left boxes.")
+
+            st.markdown("---")  # Divider
+
+            # --- Image 3 ---
+            st.write("### Map of Taiwan ADIZ")
+            st.image("images/instruction3.png", caption="", use_container_width=True)
+            st.write("**Explanation:** Refer to this image when identifying the **ADIZ Regions Violated** from the map of PLA air activities in the vicinity of Taiwan provided by the Taiwanese reports.")
 
         # Persistent main inputs
-        input_date = st.text_input("Date (MM-DD-YYYY)", value=st.session_state.get("input_date", ""))
+        input_date = st.text_input("Date **(IMPORTANT: MM-DD-YYYY FORMAT)**", value=st.session_state.get("input_date", ""))
+        input_source = st.text_input("Source (Report link)", value=st.session_state.get("input_source", ""))
+        input_map = st.text_input("Map (if provided)", value=st.session_state.get("input_map",""))
         input_aircraft_total = st.number_input(
             "Daily Aircraft Detected", min_value=0, step=1,
             value=st.session_state.get("input_aircraft_total", 0)
@@ -82,6 +113,8 @@ elif selected_section == "Upload & Edit Data":
 
         # Save to session_state
         st.session_state["input_date"] = input_date
+        st.session_state["input_source"] = input_source
+        st.session_state["input_map"] = input_map
         st.session_state["input_aircraft_total"] = input_aircraft_total
         st.session_state["input_aircraft_adiz"] = input_aircraft_adiz
         st.session_state["input_median_crossings"] = input_median_crossings
@@ -168,50 +201,65 @@ elif selected_section == "Upload & Edit Data":
         southern_adiz_inputs = adiz_form("Southern ADIZ", southern_adiz_checked)
         southwest_adiz_inputs = adiz_form("Southwest ADIZ", southwest_adiz_checked)
 
-        # --- Submit Button ---
-        st.write("---")
+        # Submit Entry: show preview & confirm
         if st.button("Submit Entry"):
-            st.write("You entered:")
-            st.write({
+            st.session_state["entry_preview"] = {
                 "Date": input_date,
                 "Daily Aircraft Detected": input_aircraft_total,
                 "Daily Aircraft in ADIZ": input_aircraft_adiz,
                 "Daily Median Line Crossings": input_median_crossings,
                 "Daily PLAN Vessels Detected": input_plan_vessels,
-                "Median Line": median_line_inputs,
-                "Eastern ADIZ": eastern_adiz_inputs,
-                "Northeast ADIZ": northeast_adiz_inputs,
-                "Southern ADIZ": southern_adiz_inputs,
-                "Southwest ADIZ": southwest_adiz_inputs
-            })
+                "Source": input_source,
+                "Map": input_map
+            }
+            st.session_state["show_confirm"] = True
+
+        # Show confirmation buttons if preview exists
+        if st.session_state.get("show_confirm"):
+            st.write("### Confirm Your Entry")
+            st.table(pd.DataFrame([st.session_state["entry_preview"]]))
+
+            col_yes, col_no = st.columns(2)
+            with col_yes:
+                if st.button("✅ Confirm Submission"):
+                    # --- Create in-memory Excel with new row ---
+                    uploaded_file.seek(0)
+                    xls = pd.ExcelFile(uploaded_file)
+                    sheet_names = xls.sheet_names
+                    output = io.BytesIO()
+
+                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                        for sheet in sheet_names:
+                            temp_df = pd.read_excel(xls, sheet_name=sheet)
+                            if sheet == "Main":
+                                temp_df = pd.concat([temp_df, pd.DataFrame([st.session_state["entry_preview"]])], ignore_index=True)
+                            temp_df.to_excel(writer, sheet_name=sheet, index=False)
+
+                    output.seek(0)
+                    st.session_state["updated_excel"] = output
+                    st.success("Entry submitted successfully!")
+
+            with col_no:
+                if st.button("❌ Cancel"):
+                    st.warning("Submission cancelled.")
+                    st.session_state["show_confirm"] = False
+                    if "updated_excel" in st.session_state:
+                        del st.session_state["updated_excel"]
+
+        # --- Download button ---
+        if st.session_state.get("updated_excel"):
+            st.download_button(
+                label="📥 Download Updated Excel",
+                data=st.session_state["updated_excel"],
+                file_name="updated_dataset.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
 
 # --- Visualise Data Section ---
 elif selected_section == "Visualise Data":
     st.subheader("Visualise Your Data")
-    uploaded_file = get_uploaded_file("upload_edit_file")  # Use same persistent file
-
-    if uploaded_file:
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        else:
-            xls = pd.ExcelFile(uploaded_file)
-            sheet_names = xls.sheet_names
-            selected_sheet = st.selectbox("Select a sheet", sheet_names, key="vis_sheet")
-            df = pd.read_excel(xls, sheet_name=selected_sheet)
-
-        cols = df.columns.tolist()
-        x_axis = st.selectbox("Select X-axis", cols)
-        y_axis = st.selectbox("Select Y-axis", cols)
-
-        fig, ax = plt.subplots()
-        ax.plot(df[x_axis], df[y_axis], marker="o")
-        ax.set_xlabel(x_axis)
-        ax.set_ylabel(y_axis)
-        ax.set_title(f"{y_axis} vs {x_axis}")
-        st.pyplot(fig)
-    else:
-        st.write("Please upload a file to visualise data.")
-    
+    uploaded_file = get_uploaded_file("upload_edit_file")  # Use same persistent file    
     # --- Dashboard Area ---
     st.write("### Dashboard Area")
 
@@ -238,9 +286,9 @@ elif selected_section == "Visualise Data":
             )
 
             # -------------------------------
-            # 1️⃣ Cumulative Statistics (Yearly View)
+            # 1️⃣ Cumulative Statistics
             # -------------------------------
-            st.subheader("Cumulative Statistics (Yearly View)")
+            st.subheader("Cumulative Statistics")
 
             monthly_aircraft = daily_forces_near_taiwan.groupby(['Year', 'Month'])['Total Aircraft Detected'].sum().reset_index()
             pivot_aircraft = monthly_aircraft.pivot(index='Month', columns='Year', values='Total Aircraft Detected').fillna(0)
@@ -283,9 +331,9 @@ elif selected_section == "Visualise Data":
             st.pyplot(fig)
 
             # -------------------------------
-            # 2️⃣ Daily Statistics (Monthly View)
+            # 2️⃣ Daily Statistics
             # -------------------------------
-            st.subheader("Daily Statistics (Monthly View)")
+            st.subheader("Daily Statistics")
 
             # Load 'Daily median line crossings' sheet if it exists
             if uploaded_file:
